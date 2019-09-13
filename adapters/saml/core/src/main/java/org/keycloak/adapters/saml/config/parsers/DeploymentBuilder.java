@@ -19,6 +19,7 @@ package org.keycloak.adapters.saml.config.parsers;
 
 import org.jboss.logging.Logger;
 import org.keycloak.adapters.saml.DefaultSamlDeployment;
+import org.keycloak.adapters.saml.RoleMappingsProviderUtils;
 import org.keycloak.adapters.saml.SamlDeployment;
 import org.keycloak.adapters.saml.config.IDP;
 import org.keycloak.adapters.saml.config.Key;
@@ -44,10 +45,8 @@ import java.util.Set;
 import org.keycloak.adapters.cloned.HttpClientBuilder;
 import java.net.URI;
 import java.security.cert.CertificateException;
-import java.security.cert.CertificateExpiredException;
-import java.security.cert.CertificateNotYetValidException;
 import java.security.cert.X509Certificate;
-import java.util.logging.Level;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
@@ -172,6 +171,9 @@ public class DeploymentBuilder {
             sso.setResponseBinding(SamlDeployment.Binding.parseBinding(
                 idp.getSingleSignOnService().getResponseBinding()));
         }
+        if (idp.getAllowedClockSkew() != null) {
+            defaultIDP.setAllowedClockSkew(convertClockSkewInMillis(idp.getAllowedClockSkew(), idp.getAllowedClockSkewUnit()));
+        }
         if (idp.getSingleSignOnService().getAssertionConsumerServiceUrl() != null) {
             if (! idp.getSingleSignOnService().getAssertionConsumerServiceUrl().endsWith("/saml")) {
                 throw new RuntimeException("AssertionConsumerServiceUrl must end with \"/saml\".");
@@ -211,7 +213,23 @@ public class DeploymentBuilder {
         defaultIDP.setClient(new HttpClientBuilder().build(idp.getHttpClientConfig()));
         defaultIDP.refreshKeyLocatorConfiguration();
 
+        // set the role mappings provider.
+        deployment.setRoleMappingsProvider(RoleMappingsProviderUtils.bootstrapRoleMappingsProvider(deployment, resourceLoader,
+                sp.getRoleMappingsProviderConfig()));
+
         return deployment;
+    }
+
+    private int convertClockSkewInMillis(int duration, TimeUnit unit) {
+        int durationMillis = (int) unit.toMillis(duration);
+        switch (unit) {
+            case NANOSECONDS:
+            case MICROSECONDS:
+                log.warn("Clock skew value will be rounded down.");
+            default:
+                log.info("Clock skew set to " + durationMillis + "ms.");
+        }
+        return durationMillis;
     }
 
     private void processSigningKey(DefaultSamlDeployment.DefaultIDP idp, Key key, ResourceLoader resourceLoader) throws RuntimeException {

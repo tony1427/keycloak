@@ -19,6 +19,7 @@
 package org.keycloak.testsuite.x509;
 
 import org.jboss.arquillian.drone.api.annotation.Drone;
+import org.keycloak.testsuite.AssertEvents;
 import org.keycloak.testsuite.util.PhantomJSBrowser;
 import org.junit.Assert;
 import org.junit.Before;
@@ -39,8 +40,8 @@ import static org.hamcrest.Matchers.startsWith;
 import static org.junit.Assert.assertEquals;
 import static org.keycloak.authentication.authenticators.x509.X509AuthenticatorConfigModel.IdentityMapperType.USERNAME_EMAIL;
 import static org.keycloak.authentication.authenticators.x509.X509AuthenticatorConfigModel.IdentityMapperType.USER_ATTRIBUTE;
-import static org.keycloak.authentication.authenticators.x509.X509AuthenticatorConfigModel.MappingSourceType.ISSUERDN_CN;
-import static org.keycloak.authentication.authenticators.x509.X509AuthenticatorConfigModel.MappingSourceType.ISSUERDN_EMAIL;
+import static org.keycloak.authentication.authenticators.x509.X509AuthenticatorConfigModel.MappingSourceType.SERIALNUMBER_ISSUERDN;
+import static org.keycloak.authentication.authenticators.x509.X509AuthenticatorConfigModel.MappingSourceType.SHA256_THUMBPRINT;
 import static org.keycloak.authentication.authenticators.x509.X509AuthenticatorConfigModel.MappingSourceType.SERIALNUMBER;
 import static org.keycloak.authentication.authenticators.x509.X509AuthenticatorConfigModel.MappingSourceType.SUBJECTDN;
 import static org.keycloak.authentication.authenticators.x509.X509AuthenticatorConfigModel.MappingSourceType.SUBJECTDN_EMAIL;
@@ -65,28 +66,6 @@ public class X509BrowserLoginTest extends AbstractX509AuthenticationTest {
     @Before
     public void replaceTheDefaultDriver() {
         replaceDefaultWebDriver(phantomJS);
-    }
-
-    private void login(X509AuthenticatorConfigModel config, String userId, String username, String attemptedUsername) {
-        AuthenticatorConfigRepresentation cfg = newConfig("x509-browser-config", config.getConfig());
-        String cfgId = createConfig(browserExecution.getId(), cfg);
-        Assert.assertNotNull(cfgId);
-
-        loginConfirmationPage.open();
-
-        Assert.assertTrue(loginConfirmationPage.getSubjectDistinguishedNameText().startsWith("EMAILADDRESS=test-user@localhost"));
-        Assert.assertEquals(username, loginConfirmationPage.getUsernameText());
-
-        loginConfirmationPage.confirm();
-
-        Assert.assertEquals(AppPage.RequestType.AUTH_RESPONSE, appPage.getRequestType());
-        Assert.assertNotNull(oauth.getCurrentQuery().get(OAuth2Constants.CODE));
-
-         events.expectLogin()
-                 .user(userId)
-                 .detail(Details.USERNAME, attemptedUsername)
-                 .removeDetail(Details.REDIRECT_URI)
-                 .assertEvent();
     }
 
 
@@ -167,9 +146,34 @@ public class X509BrowserLoginTest extends AbstractX509AuthenticationTest {
     }
 
     @Test
-    public void loginAsUserFromCertIssuerCNMappedToUserAttribute() {
-        x509BrowserLogin(createLoginWithSpecifiedSourceTypeToCustomAttributeConfig(ISSUERDN_CN, "x509_issuer_identity"),
-                userId2, "keycloak", "Keycloak Intermediate CA");
+    public void loginAsUserFromCertSerialnumberAndIssuerDNMappedToUserAttribute() {
+        UserRepresentation user = testRealm().users().get(userId2).toRepresentation();
+        Assert.assertNotNull(user);
+
+        user.singleAttribute("x509_certificate_serialnumber", "4105");
+        user.singleAttribute("x509_issuer_dn", "EMAILADDRESS=contact@keycloak.org, CN=Keycloak Intermediate CA, OU=Keycloak, O=Red Hat, ST=MA, C=US");
+        this.updateUser(user);
+
+        events.clear();
+        
+        x509BrowserLogin(createLoginWithSpecifiedSourceTypeToCustomAttributeConfig(SERIALNUMBER_ISSUERDN, "x509_certificate_serialnumber##x509_issuer_dn"),
+                userId2, "keycloak", "4105##EMAILADDRESS=contact@keycloak.org, CN=Keycloak Intermediate CA, OU=Keycloak, O=Red Hat, ST=MA, C=US");
+    }
+    
+    @Test
+    public void loginAsUserFromHexCertSerialnumberAndIssuerDNMappedToUserAttribute() {
+        UserRepresentation user = testRealm().users().get(userId2).toRepresentation();
+        Assert.assertNotNull(user);
+
+        user.singleAttribute("x509_certificate_serialnumber", "1009");
+        user.singleAttribute("x509_issuer_dn", "EMAILADDRESS=contact@keycloak.org, CN=Keycloak Intermediate CA, OU=Keycloak, O=Red Hat, ST=MA, C=US");
+        this.updateUser(user);
+
+        events.clear();
+        
+        X509AuthenticatorConfigModel config = createLoginWithSpecifiedSourceTypeToCustomAttributeConfig(SERIALNUMBER_ISSUERDN, "x509_certificate_serialnumber##x509_issuer_dn");
+        config.setSerialnumberHex(true);
+        x509BrowserLogin(config, userId2, "keycloak", "1009##EMAILADDRESS=contact@keycloak.org, CN=Keycloak Intermediate CA, OU=Keycloak, O=Red Hat, ST=MA, C=US");
     }
 
     @Test
@@ -188,18 +192,18 @@ public class X509BrowserLoginTest extends AbstractX509AuthenticationTest {
 
 
     @Test
-    public void loginAsUserFromCertIssuerEmailMappedToUserAttribute() {
+    public void loginAsUserFromCertSHA256MappedToUserAttribute() {
 
         UserRepresentation user = testRealm().users().get(userId2).toRepresentation();
         Assert.assertNotNull(user);
 
-        user.singleAttribute("x509_issuer_identity", "contact@keycloak.org");
+        user.singleAttribute("x509_cert_sha256thumbprint", "71237a14c118a90cc8406f14d039ed3431c9065f68e535293ee919d4c33b5e15");
         this.updateUser(user);
 
         events.clear();
 
-        x509BrowserLogin(createLoginWithSpecifiedSourceTypeToCustomAttributeConfig(ISSUERDN_EMAIL, "x509_issuer_identity"),
-                userId2, "keycloak", "contact@keycloak.org");
+        x509BrowserLogin(createLoginWithSpecifiedSourceTypeToCustomAttributeConfig(SHA256_THUMBPRINT, "x509_cert_sha256thumbprint"),
+                userId2, "keycloak", "71237a14c118a90cc8406f14d039ed3431c9065f68e535293ee919d4c33b5e15");
     }
 
 
@@ -216,6 +220,22 @@ public class X509BrowserLoginTest extends AbstractX509AuthenticationTest {
 
         x509BrowserLogin(createLoginWithSpecifiedSourceTypeToCustomAttributeConfig(SERIALNUMBER, "x509_serial_number"),
                 userId2, "keycloak", "4105");
+    }
+    
+    @Test
+    public void loginAsUserFromHexCertSerialNumberMappedToUserAttribute() {
+
+        UserRepresentation user = testRealm().users().get(userId2).toRepresentation();
+        Assert.assertNotNull(user);
+
+        user.singleAttribute("x509_serial_number", "1009");
+        this.updateUser(user);
+
+        events.clear();
+
+        X509AuthenticatorConfigModel config = createLoginWithSpecifiedSourceTypeToCustomAttributeConfig(SERIALNUMBER, "x509_serial_number");
+        config.setSerialnumberHex(true);
+        x509BrowserLogin(config, userId2, "keycloak", "1009");
     }
 
 
@@ -376,13 +396,15 @@ public class X509BrowserLoginTest extends AbstractX509AuthenticationTest {
 
         Assert.assertThat(loginPage.getError(), containsString("X509 certificate authentication's failed."));
 
-        events.expectLogin()
+        AssertEvents.ExpectedEvent expectedEvent = events.expectLogin()
                 .user((String) null)
                 .session((String) null)
                 .error("user_not_found")
                 .detail(Details.USERNAME, "test-user@localhost")
                 .removeDetail(Details.CONSENT)
-                .removeDetail(Details.REDIRECT_URI)
+                .removeDetail(Details.REDIRECT_URI);
+
+        addX509CertificateDetails(expectedEvent)
                 .assertEvent();
 
         // Continue with form based login
@@ -461,10 +483,13 @@ public class X509BrowserLoginTest extends AbstractX509AuthenticationTest {
         // the identity.
         Assert.assertEquals(AppPage.RequestType.AUTH_RESPONSE, appPage.getRequestType());
         Assert.assertNotNull(oauth.getCurrentQuery().get(OAuth2Constants.CODE));
-        events.expectLogin()
+
+        AssertEvents.ExpectedEvent expectedEvent = events.expectLogin()
                 .user(userId)
                 .detail(Details.USERNAME, "test-user@localhost")
-                .removeDetail(Details.REDIRECT_URI)
+                .removeDetail(Details.REDIRECT_URI);
+
+        addX509CertificateDetails(expectedEvent)
                 .assertEvent();
     }
 
